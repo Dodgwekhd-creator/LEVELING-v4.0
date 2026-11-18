@@ -1,4 +1,4 @@
-# LEVELING (v3.2)
+# LEVELING (v4.0)
 
 An offline-first cognitive training engine and procedural puzzle web application built as a self-contained single-file HTML5, CSS3, and Vanilla JavaScript application.
 
