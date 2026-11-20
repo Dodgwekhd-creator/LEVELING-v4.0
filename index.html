@@ -496,11 +496,11 @@
       </div>
 
       <div id="domainFilterBar" style="display:none; gap:6px; padding:4px 0; flex-wrap:wrap;">
-        <button onclick="setDomainFilter('all')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="all">All Domains</button>
-        <button onclick="setDomainFilter('spatial')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="spatial">Spatial</button>
-        <button onclick="setDomainFilter('memory')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="memory">Memory</button>
-        <button onclick="setDomainFilter('logic')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="logic">Logic</button>
-        <button onclick="setDomainFilter('pattern')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="pattern">Pattern</button>
+        <button onclick="setDomainFilter('all')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="all" aria-pressed="true">All Domains</button>
+        <button onclick="setDomainFilter('spatial')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="spatial" aria-pressed="false">Spatial</button>
+        <button onclick="setDomainFilter('memory')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="memory" aria-pressed="false">Memory</button>
+        <button onclick="setDomainFilter('logic')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="logic" aria-pressed="false">Logic</button>
+        <button onclick="setDomainFilter('pattern')" class="btn" style="padding:4px 10px; font-size:.75rem;" data-filter="pattern" aria-pressed="false">Pattern</button>
       </div>
 
       <!-- Segmented progress (campaign and review runs) -->
@@ -526,7 +526,7 @@
           <!-- Option buttons injected via JavaScript -->
         </div>
 
-        <div id="feedbackBanner" class="feedback hidden">
+        <div id="feedbackBanner" class="feedback hidden" role="status" aria-live="polite" aria-atomic="true">
           <!-- Populated upon answer selection -->
         </div>
 
@@ -766,13 +766,32 @@
       return merged;
     }
 
+    function sanitizeImportedDate(val) {
+      if (typeof val !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(val)) return null;
+      const t = Date.parse(val);
+      if (Number.isNaN(t)) return null;
+      const [y, m, d] = val.split('-').map(Number);
+      const parsed = new Date(t);
+      if (parsed.getUTCFullYear() !== y || (parsed.getUTCMonth() + 1) !== m || parsed.getUTCDate() !== d) {
+        return null;
+      }
+      return val;
+    }
+
     function sanitizeImportedState(parsed) {
       const clean = defaultState();
       if (!parsed || typeof parsed !== 'object') return clean;
 
       if (typeof parsed.streak === 'number' && parsed.streak >= 0) clean.streak = Math.floor(parsed.streak);
-      if (typeof parsed.lastActiveDate === 'string' || parsed.lastActiveDate === null) clean.lastActiveDate = parsed.lastActiveDate;
-      if (typeof parsed.countDate === 'string' || parsed.countDate === null) clean.countDate = parsed.countDate;
+      clean.lastActiveDate = sanitizeImportedDate(parsed.lastActiveDate ?? parsed.lastPlayedDate ?? parsed.streakDate);
+      clean.countDate = sanitizeImportedDate(parsed.countDate);
+      if ('lastPlayedDate' in parsed) clean.lastPlayedDate = sanitizeImportedDate(parsed.lastPlayedDate);
+      if ('streakDate' in parsed) clean.streakDate = sanitizeImportedDate(parsed.streakDate);
+      for (const key of Object.keys(parsed)) {
+        if (key.toLowerCase().endsWith('date') && !['lastActiveDate', 'countDate', 'lastPlayedDate', 'streakDate'].includes(key)) {
+          clean[key] = sanitizeImportedDate(parsed[key]);
+        }
+      }
       if (typeof parsed.freezeAvailable === 'number' && parsed.freezeAvailable >= 0) clean.freezeAvailable = Math.min(2, Math.floor(parsed.freezeAvailable));
       if (typeof parsed.todaySolvedCount === 'number' && parsed.todaySolvedCount >= 0) clean.todaySolvedCount = Math.floor(parsed.todaySolvedCount);
       if (typeof parsed.audioEnabled === 'boolean') clean.audioEnabled = parsed.audioEnabled;
@@ -1466,23 +1485,41 @@
       const targetB = (tier >= 4 ? 3 : 2) + Math.floor(Math.random() * 3);
       const correctVal = fn(targetA, targetB);
 
-      const usedVals = new Set([correctVal]);
-      const candidates = [correctVal + 2, targetA * targetB, correctVal - 3, correctVal + 4, correctVal - 2, correctVal + 5];
-      const distractors = [];
-      for (const cand of candidates) {
-        if (!usedVals.has(cand) && distractors.length < 3) {
-          usedVals.add(cand);
-          distractors.push(cand);
-        }
+      const step = targetB;
+      const diff = targetA;
+      const candidatePool = [
+        targetA * targetB,
+        targetA + targetB,
+        Math.abs(targetA - targetB),
+        correctVal + step, correctVal - step,
+        correctVal + 2 * step, correctVal - 2 * step,
+        correctVal + 1, correctVal - 1,
+        correctVal + 2, correctVal - 2,
+        correctVal + 3, correctVal - 3,
+        correctVal + diff, correctVal - diff,
+        correctVal + step + 1, correctVal - step - 1,
+        correctVal + step - 1, correctVal - step + 1
+      ].filter(x => Number.isInteger(x) && x > 0 && x !== correctVal);
+
+      const below = shuffleArray(candidatePool.filter(x => x < correctVal));
+      const above = shuffleArray(candidatePool.filter(x => x > correctVal));
+      const targetBelow = Math.floor(Math.random() * 4);
+      const usedVals = new Set();
+      for (const c of below) {
+        if (usedVals.size < targetBelow) usedVals.add(c);
       }
-      let fallbackOffset = 6;
-      while (distractors.length < 3) {
-        const cand = correctVal + fallbackOffset++;
-        if (!usedVals.has(cand)) {
-          usedVals.add(cand);
-          distractors.push(cand);
-        }
+      for (const c of above) {
+        if (usedVals.size < 3) usedVals.add(c);
       }
+      for (const c of below) {
+        if (usedVals.size < 3) usedVals.add(c);
+      }
+      let fallbackOffset = 1;
+      while (usedVals.size < 3) {
+        const c = correctVal + fallbackOffset++;
+        if (c > 0 && c !== correctVal) usedVals.add(c);
+      }
+      const distractors = Array.from(usedVals);
 
       const rawOpts = [
         { id: 'opt_true', text: `${correctVal}`, isCorrect: true },
@@ -1752,13 +1789,27 @@
 
     // ── Logic #3: Categorical Syllogism ──
     function generateSyllogismProblem(tier) {
-      const categories = shuffleArray([
+      // Real-world hierarchy chains (A ⊆ B ⊆ C) for "All A are B" templates
+      const hierarchyCategories = shuffleArray([
         ['mammals', 'warm-blooded creatures', 'vertebrates'],
         ['squares', 'rectangles', 'quadrilaterals'],
         ['roses', 'flowers', 'plants'],
         ['students', 'learners', 'people'],
         ['sparrows', 'birds', 'animals']
       ]);
+      // Dedicated fictional/abstract category triples for "No A are B" templates
+      const abstractCategories = shuffleArray([
+        ['Zorgons', 'Blibbers', 'Quarkians'],
+        ['Veridians', 'Solarians', 'Lunarians'],
+        ['Kreln', 'Vexis', 'Thalor'],
+        ['Glimmers', 'Drifters', 'Sparks'],
+        ['Alphas', 'Betas', 'Gammas']
+      ]);
+
+      const templateIndex = Math.floor(Math.random() * 4);
+      // Templates at indices 1 and 3 use "No A are B" premises; 0 and 2 use "All A are B"
+      const isNoTemplate = (templateIndex === 1 || templateIndex === 3);
+      const categories = isNoTemplate ? abstractCategories : hierarchyCategories;
       const validCategories = categories.filter(c => Array.isArray(c) && new Set(c).size === 3);
       const cat = validCategories[0] || categories[0];
       const [termA, termB, termC] = cat;
@@ -1772,7 +1823,7 @@
         { p1: `All ${termA} are ${termB}`, p2: `Some ${termC} are ${termA}`, valid: `Some ${termC} are ${termB}`, invalid: `All ${termC} are ${termB}` },
         { p1: `No ${termA} are ${termB}`, p2: `Some ${termC} are ${termB}`, valid: `Some ${termC} are not ${termA}`, invalid: `No ${termC} are ${termA}` }
       ];
-      const tmpl = templates[Math.floor(Math.random() * templates.length)];
+      const tmpl = templates[templateIndex];
       const sub = (s) => s.replace(/\{A\}/g, termA).replace(/\{B\}/g, termB).replace(/\{C\}/g, termC);
       const validConclusion = sub(tmpl.valid);
       const invalidConclusion = sub(tmpl.invalid);
@@ -1845,7 +1896,7 @@
     // ── Pattern #3: Second-Order & Interleaved Number Sequences ──
     function generateSequenceProblem(tier) {
       const seqType = Math.floor(Math.random() * 3);
-      let sequence, correctNext, explanation;
+      let sequence, correctNext, explanation, step, diff;
       if (seqType === 0) {
         const d2 = (tier >= 3 ? 3 : 2) + Math.floor(Math.random() * 3);
         let d1 = 1 + Math.floor(Math.random() * 4);
@@ -1853,6 +1904,8 @@
         sequence = [val];
         for (let i = 0; i < 5; i++) { val += d1; d1 += d2; sequence.push(val); }
         correctNext = val + d1;
+        step = d2;
+        diff = d1;
         explanation = 'The differences between terms increase by ' + d2 + ' each time (second-order constant). Next term: ' + correctNext + '.';
       } else if (seqType === 1) {
         let a = 1 + Math.floor(Math.random() * 5);
@@ -1865,6 +1918,8 @@
           else { sequence.push(b); b += bStep; }
         }
         correctNext = a;
+        step = aStep;
+        diff = Math.abs(bStep);
         explanation = 'Two interleaved sequences: odd positions increase by ' + aStep + ', even positions decrease by ' + Math.abs(bStep) + '. Next: ' + correctNext + '.';
       } else {
         const k = 2 + Math.floor(Math.random() * 2);
@@ -1876,18 +1931,44 @@
           sequence.push(val);
         }
         correctNext = (5 % 2 === 0) ? val * k : val + m;
+        step = m;
+        diff = k;
         explanation = 'Pattern alternates \u00d7' + k + ' then +' + m + '. Next: ' + correctNext + '.';
       }
-      const usedVals = new Set([correctNext]);
-      const dists = [];
-      for (const offset of [1, -1, 2, -2, 3, -3, 5]) {
-        const c = correctNext + offset;
-        if (!usedVals.has(c)) { usedVals.add(c); dists.push(c); }
-        if (dists.length >= 3) break;
+
+      const candidatePool = [
+        correctNext + step, correctNext - step,
+        correctNext + 2 * step, correctNext - 2 * step,
+        correctNext + 1, correctNext - 1,
+        correctNext + 2, correctNext - 2,
+        correctNext + 3, correctNext - 3,
+        correctNext + diff, correctNext - diff,
+        correctNext + step + 1, correctNext - step - 1,
+        correctNext + step - 1, correctNext - step + 1
+      ].filter(x => Number.isInteger(x) && x > 0 && x !== correctNext);
+
+      const below = shuffleArray(candidatePool.filter(x => x < correctNext));
+      const above = shuffleArray(candidatePool.filter(x => x > correctNext));
+      const targetBelow = Math.floor(Math.random() * 4);
+      const usedVals = new Set();
+      for (const c of below) {
+        if (usedVals.size < targetBelow) usedVals.add(c);
       }
+      for (const c of above) {
+        if (usedVals.size < 3) usedVals.add(c);
+      }
+      for (const c of below) {
+        if (usedVals.size < 3) usedVals.add(c);
+      }
+      let fallbackOffset = 1;
+      while (usedVals.size < 3) {
+        const c = correctNext + fallbackOffset++;
+        if (c > 0 && c !== correctNext) usedVals.add(c);
+      }
+      const dists = Array.from(usedVals);
       const rawOpts = shuffleArray([
         { id: 'opt_true', text: '' + correctNext, isCorrect: true },
-        ...dists.slice(0, 3).map((d, i) => ({ id: 'opt_d' + (i + 1), text: '' + d, isCorrect: false }))
+        ...dists.map((d, i) => ({ id: 'opt_d' + (i + 1), text: '' + d, isCorrect: false }))
       ]);
       return {
         id: 'proc_seq_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
@@ -1925,6 +2006,7 @@
       if (bar) {
         Array.from(bar.children).forEach(btn => {
           const isActive = btn.getAttribute('data-filter') === domain;
+          btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
           btn.style.background = isActive ? 'var(--plum)' : 'var(--paper)';
           btn.style.color = isActive ? 'var(--cream)' : 'var(--ink)';
         });
