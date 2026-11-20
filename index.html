@@ -1752,12 +1752,6 @@
 
     // ── Logic #3: Categorical Syllogism ──
     function generateSyllogismProblem(tier) {
-      const templates = [
-        { p1: 'All A are B', p2: 'All B are C', valid: 'All A are C', invalid: 'All C are A' },
-        { p1: 'No A are B', p2: 'All C are A', valid: 'No C are B', invalid: 'No A are C' },
-        { p1: 'All A are B', p2: 'Some C are A', valid: 'Some C are B', invalid: 'All C are B' },
-        { p1: 'No A are B', p2: 'Some C are B', valid: 'Some C are not A', invalid: 'No C are A' }
-      ];
       const categories = shuffleArray([
         ['mammals', 'warm-blooded creatures', 'vertebrates'],
         ['squares', 'rectangles', 'quadrilaterals'],
@@ -1765,9 +1759,21 @@
         ['students', 'learners', 'people'],
         ['sparrows', 'birds', 'animals']
       ]);
-      const cat = categories[0];
+      const validCategories = categories.filter(c => Array.isArray(c) && new Set(c).size === 3);
+      const cat = validCategories[0] || categories[0];
+      const [termA, termB, termC] = cat;
+      const termsSet = new Set([termA, termB, termC]);
+      if (termsSet.size !== 3) {
+        throw new Error('termA, termB, and termC must be strictly distinct');
+      }
+      const templates = [
+        { p1: `All ${termA} are ${termB}`, p2: `All ${termB} are ${termC}`, valid: `All ${termA} are ${termC}`, invalid: `All ${termC} are ${termA}` },
+        { p1: `No ${termA} are ${termB}`, p2: `All ${termC} are ${termA}`, valid: `No ${termC} are ${termB}`, invalid: `No ${termA} are ${termC}` },
+        { p1: `All ${termA} are ${termB}`, p2: `Some ${termC} are ${termA}`, valid: `Some ${termC} are ${termB}`, invalid: `All ${termC} are ${termB}` },
+        { p1: `No ${termA} are ${termB}`, p2: `Some ${termC} are ${termB}`, valid: `Some ${termC} are not ${termA}`, invalid: `No ${termC} are ${termA}` }
+      ];
       const tmpl = templates[Math.floor(Math.random() * templates.length)];
-      const sub = (s) => s.replace(/A/g, cat[0]).replace(/B/g, cat[1]).replace(/C/g, cat[2]);
+      const sub = (s) => s.replace(/\{A\}/g, termA).replace(/\{B\}/g, termB).replace(/\{C\}/g, termC);
       const validConclusion = sub(tmpl.valid);
       const invalidConclusion = sub(tmpl.invalid);
       const rawOpts = shuffleArray([
