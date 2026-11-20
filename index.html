@@ -785,13 +785,6 @@
       if (typeof parsed.streak === 'number' && parsed.streak >= 0) clean.streak = Math.floor(parsed.streak);
       clean.lastActiveDate = sanitizeImportedDate(parsed.lastActiveDate ?? parsed.lastPlayedDate ?? parsed.streakDate);
       clean.countDate = sanitizeImportedDate(parsed.countDate);
-      if ('lastPlayedDate' in parsed) clean.lastPlayedDate = sanitizeImportedDate(parsed.lastPlayedDate);
-      if ('streakDate' in parsed) clean.streakDate = sanitizeImportedDate(parsed.streakDate);
-      for (const key of Object.keys(parsed)) {
-        if (key.toLowerCase().endsWith('date') && !['lastActiveDate', 'countDate', 'lastPlayedDate', 'streakDate'].includes(key)) {
-          clean[key] = sanitizeImportedDate(parsed[key]);
-        }
-      }
       if (typeof parsed.freezeAvailable === 'number' && parsed.freezeAvailable >= 0) clean.freezeAvailable = Math.min(2, Math.floor(parsed.freezeAvailable));
       if (typeof parsed.todaySolvedCount === 'number' && parsed.todaySolvedCount >= 0) clean.todaySolvedCount = Math.floor(parsed.todaySolvedCount);
       if (typeof parsed.audioEnabled === 'boolean') clean.audioEnabled = parsed.audioEnabled;
