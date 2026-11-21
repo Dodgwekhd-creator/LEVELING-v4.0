@@ -607,10 +607,8 @@
 
       <div class="modal-actions">
         <button onclick="exportUserProfileJSON()" class="btn">Export backup</button>
-        <label class="btn">
-          <span>Import backup</span>
-          <input type="file" id="importFileInput" onchange="importUserProfileJSON(event)" class="hidden" accept=".json">
-        </label>
+        <button type="button" onclick="document.getElementById('importFileInput').click()" class="btn">Import backup</button>
+        <input type="file" id="importFileInput" onchange="importUserProfileJSON(event)" class="hidden" accept=".json" tabindex="-1">
       </div>
 
       <button onclick="resetAllProgressPrompt()" class="text-btn danger">Reset all progress</button>
@@ -795,9 +793,11 @@
       if (parsed.domainStats && typeof parsed.domainStats === 'object') {
         VALID_DOMAINS.forEach(k => {
           if (parsed.domainStats[k]) {
+            const total = Math.max(0, Math.floor(Number(parsed.domainStats[k].total) || 0));
+            const rawCorrect = Math.max(0, Math.floor(Number(parsed.domainStats[k].correct) || 0));
             clean.domainStats[k] = {
-              correct: Math.max(0, Math.floor(Number(parsed.domainStats[k].correct) || 0)),
-              total: Math.max(0, Math.floor(Number(parsed.domainStats[k].total) || 0))
+              correct: Math.min(total, rawCorrect),
+              total: total
             };
           }
         });
@@ -817,8 +817,9 @@
             const safeAlteredIndices = Array.isArray(q.alteredIndices)
               ? q.alteredIndices.map(n => Math.floor(Number(n))).filter(n => n >= 0 && n < gSize * gSize)
               : undefined;
+            const VALID_STREAM_SYMBOLS = ['▲', '■', '●', '◆', '★', '✦', '⬟', '⬡'];
             const safeStreamSymbols = Array.isArray(q.streamSymbols)
-              ? q.streamSymbols.map(s => String(s)).slice(0, 10)
+              ? q.streamSymbols.map(s => String(s)).filter(s => VALID_STREAM_SYMBOLS.includes(s)).slice(0, 10)
               : undefined;
 
             return {
@@ -844,8 +845,19 @@
               schema: String(q.schema || 'Explanation')
             };
           })
-          // Drop legacy spatial items that lack numeric previewGrid data
-          .filter(q => q.renderType !== 'spatial' || (Array.isArray(q.referenceGrid) && q.options.every(o => o.previewGrid)));
+          // Drop legacy spatial items that lack numeric previewGrid data and ensure valid memory/stream items
+          .filter(q => {
+            if (q.renderType === 'spatial') {
+              return Array.isArray(q.referenceGrid) && q.options.every(o => o.previewGrid);
+            }
+            if (q.renderType === 'memory') {
+              return Array.isArray(q.litIndices) && q.litIndices.length > 0;
+            }
+            if (q.renderType === 'stream') {
+              return Array.isArray(q.streamSymbols) && q.streamSymbols.length > 0;
+            }
+            return true;
+          });
       }
 
       clean.schemaVersion = SCHEMA_VERSION;
@@ -1537,38 +1549,53 @@
 
     // ── Spatial #2: Unfolded 3D Cube Nets ──
     function generateCubeNetProblem(tier) {
-      const faces = ['Top', 'Front', 'Right', 'Bottom', 'Back', 'Left'];
-      const opposites = { Top: 'Bottom', Bottom: 'Top', Front: 'Back', Back: 'Front', Left: 'Right', Right: 'Left' };
-      const adjacency = {
-        Top: ['Front', 'Right', 'Back', 'Left'],
-        Bottom: ['Front', 'Right', 'Back', 'Left'],
-        Front: ['Top', 'Right', 'Bottom', 'Left'],
-        Back: ['Top', 'Right', 'Bottom', 'Left'],
-        Left: ['Top', 'Front', 'Bottom', 'Back'],
-        Right: ['Top', 'Front', 'Bottom', 'Back']
-      };
-      const queryFace = faces[Math.floor(Math.random() * faces.length)];
+      const labels = shuffleArray(['A', 'B', 'C', 'D', 'E', 'F']);
+      // Cross net layout:
+      // Vertical spine: labels[0], labels[1], labels[2], labels[3]
+      // Left arm of labels[1]: labels[4]
+      // Right arm of labels[1]: labels[5]
+      // Opposite pairs: (0, 2), (1, 3), (4, 5)
+      const oppIndexMap = { 0: 2, 2: 0, 1: 3, 3: 1, 4: 5, 5: 4 };
+      const queryIdx = Math.floor(Math.random() * 6);
+      const oppIdx = oppIndexMap[queryIdx];
+      const queryFace = labels[queryIdx];
+      const correctAnswer = labels[oppIdx];
+
+      const adjacentIndices = [0, 1, 2, 3, 4, 5].filter(i => i !== queryIdx && i !== oppIdx);
+      const distractors = shuffleArray(adjacentIndices.map(i => labels[i])).slice(0, 3);
+
       const isOpposite = Math.random() < 0.5;
-      const correctAnswer = isOpposite ? opposites[queryFace] : adjacency[queryFace][Math.floor(Math.random() * 4)];
       const qText = isOpposite
-        ? `On a standard cube, which face is directly opposite the ${queryFace} face?`
-        : `Which of these faces is adjacent to (shares an edge with) the ${queryFace} face?`;
-      const pool = faces.filter(f => f !== queryFace && f !== correctAnswer);
-      const distractors = shuffleArray(pool).slice(0, 3);
+        ? `When folded into a 3D cube, which face is directly opposite face ${queryFace}?`
+        : `When folded into a 3D cube, which face does NOT share an edge with face ${queryFace}?`;
+
+      const sp = '\u00A0';
+      const netDiagram = [
+        'Unfolded cross-shaped cube net:',
+        `${sp.repeat(6)}[ ${labels[0]} ]`,
+        `[ ${labels[4]} ] [ ${labels[1]} ] [ ${labels[5]} ]`,
+        `${sp.repeat(6)}[ ${labels[2]} ]`,
+        `${sp.repeat(6)}[ ${labels[3]} ]`,
+        '',
+        `Vertical spine: [${labels[0]}], [${labels[1]}], [${labels[2]}], [${labels[3]}]`,
+        `Side arms: [${labels[4]}] (left of [${labels[1]}]), [${labels[5]}] (right of [${labels[1]}])`
+      ].join('\n');
+
       const rawOpts = shuffleArray([
         { id: 'opt_true', text: correctAnswer, isCorrect: true },
         ...distractors.map((d, i) => ({ id: `opt_d${i + 1}`, text: d, isCorrect: false }))
       ]);
+
       return {
         id: 'proc_cubenet_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
         domainKey: 'spatial',
         domainLabel: 'Spatial Reasoning',
         difficultyLabel: `Tier ${tier}`,
         prompt: qText,
-        context: 'A standard cube has 6 faces. Opposite faces: Top/Bottom, Front/Back, Left/Right.',
+        context: netDiagram,
         renderType: 'text',
         options: rawOpts,
-        explanation: `On a standard cube, opposite pairs are Top/Bottom, Front/Back, Left/Right. The ${queryFace} face is ${isOpposite ? 'opposite' : 'adjacent'} to ${correctAnswer}.`,
+        explanation: `In an unfolded cross net with vertical spine [${labels[0]}, ${labels[1]}, ${labels[2]}, ${labels[3]}] and side arms [${labels[4]}] and [${labels[5]}], the opposite pairs are (${labels[0]}, ${labels[2]}), (${labels[1]}, ${labels[3]}), and (${labels[4]}, ${labels[5]}). Therefore, face ${queryFace} is opposite face ${correctAnswer} and does not share an edge with it.`,
         schema: 'Cube Net Spatial Reasoning'
       };
     }
@@ -1576,7 +1603,7 @@
     // ── Spatial #3: Grid Vector Navigator ──
     function generateVectorNavProblem(tier) {
       const dirs = ['North', 'East', 'South', 'West'];
-      const dxy = { North: [0, -1], East: [1, 0], South: [0, 1], West: [-1, 0] };
+      const dxy = { North: [0, 1], East: [1, 0], South: [0, -1], West: [-1, 0] };
       const gridSize = tier >= 4 ? 6 : (tier >= 2 ? 5 : 4);
       let x = Math.floor(Math.random() * (gridSize - 2)) + 1;
       let y = Math.floor(Math.random() * (gridSize - 2)) + 1;
@@ -1592,20 +1619,20 @@
           const nx = x + d[0], ny = y + d[1];
           if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
             x = nx; y = ny;
-            instructions.push('Move forward 1 step (facing ' + facing + ')');
+            instructions.push('Move forward 1 step');
           } else {
             const fi = dirs.indexOf(facing);
             facing = dirs[(fi + 1) % 4];
-            instructions.push('Turn right (now facing ' + facing + ')');
+            instructions.push('Turn right 90°');
           }
         } else if (mt === 'turn-left') {
           const fi = dirs.indexOf(facing);
           facing = dirs[(fi + 3) % 4];
-          instructions.push('Turn left (now facing ' + facing + ')');
+          instructions.push('Turn left 90°');
         } else {
           const fi = dirs.indexOf(facing);
           facing = dirs[(fi + 1) % 4];
-          instructions.push('Turn right (now facing ' + facing + ')');
+          instructions.push('Turn right 90°');
         }
       }
       const correctText = '(' + x + ', ' + y + ') facing ' + facing;
@@ -1638,11 +1665,11 @@
         domainKey: 'spatial',
         domainLabel: 'Spatial Reasoning',
         difficultyLabel: 'Tier ' + tier,
-        prompt: 'Starting at (' + startX + ', ' + startY + ') facing ' + startFacing + ' on a ' + gridSize + '\u00d7' + gridSize + ' grid, follow the instructions. What is your final position and facing?',
-        context: instructions.map((inst, i) => (i + 1) + '. ' + inst).join('\n'),
+        prompt: 'Starting at (' + startX + ', ' + startY + ') facing ' + startFacing + ' on a ' + gridSize + '\u00d7' + gridSize + ' grid, follow the instructions. What is your final position and facing? (Origin (0, 0) is bottom-left: East is +x, North is +y.)',
+        context: '(Origin (0, 0) is bottom-left: East is +x, North is +y.)\n\n' + instructions.map((inst, i) => (i + 1) + '. ' + inst).join('\n'),
         renderType: 'text',
         options: rawOpts,
-        explanation: 'Following each step from (' + startX + ',' + startY + ') facing ' + startFacing + ', the final position is ' + correctText + '.',
+        explanation: 'Following each step from (' + startX + ',' + startY + ') facing ' + startFacing + ' with East as +x and North as +y, the final position is ' + correctText + '.',
         schema: 'Vector Navigation'
       };
     }
@@ -1745,19 +1772,51 @@
       const names = shuffleArray(['Ada', 'Blake', 'Cal', 'Dana', 'Eve', 'Finn']);
       const count = tier >= 4 ? 4 : 3;
       const speakers = names.slice(0, count);
-      const types = speakers.map(() => Math.random() < 0.5 ? 'Knight' : 'Knave');
-      const statements = [];
-      for (let i = 0; i < count; i++) {
-        const other = (i + 1) % count;
-        const otherType = types[other];
-        const isKnight = types[i] === 'Knight';
-        if (isKnight) {
-          statements.push(speakers[i] + ' says: "' + speakers[other] + ' is a ' + otherType + '."');
-        } else {
-          const lie = otherType === 'Knight' ? 'Knave' : 'Knight';
-          statements.push(speakers[i] + ' says: "' + speakers[other] + ' is a ' + lie + '."');
+      let statements = [];
+      let solvedAssignment = null;
+
+      for (let attempt = 0; attempt < 500; attempt++) {
+        const templates = [
+          { text: 'At least one of us is a Knave.', fn: (as) => as.some(x => !x) },
+          { text: 'All of us are Knaves.', fn: (as) => as.every(x => !x) },
+          { text: 'Both ' + speakers[0] + ' and ' + speakers[1] + ' are Knaves.', fn: (as) => !as[0] && !as[1] },
+          { text: 'At least one of ' + speakers[0] + ' and ' + speakers[1] + ' is a Knave.', fn: (as) => !as[0] || !as[1] },
+          { text: speakers[0] + ' is a Knave and ' + speakers[1] + ' is a Knight.', fn: (as) => !as[0] && as[1] },
+          { text: 'Exactly one of us is a Knight.', fn: (as) => as.filter(Boolean).length === 1 }
+        ];
+        const s0 = templates[Math.floor(Math.random() * templates.length)];
+        const candidateStatements = [
+          { speaker: 0, text: speakers[0] + ' says: "' + s0.text + '"', fn: s0.fn }
+        ];
+        for (let i = 1; i < count; i++) {
+          const target = (i + 1) % count;
+          const claimKnight = Math.random() < 0.5;
+          candidateStatements.push({
+            speaker: i,
+            text: speakers[i] + ' says: "' + speakers[target] + ' is a ' + (claimKnight ? 'Knight' : 'Knave') + '."',
+            fn: (as) => claimKnight ? as[target] : !as[target]
+          });
+        }
+
+        const validAssignments = [];
+        const total = 1 << count;
+        for (let mask = 0; mask < total; mask++) {
+          const as = [];
+          for (let b = 0; b < count; b++) as.push(Boolean((mask >> b) & 1));
+          const isValid = candidateStatements.every(st => Boolean(as[st.speaker]) === Boolean(st.fn(as)));
+          if (isValid) {
+            validAssignments.push(as);
+          }
+        }
+
+        if (validAssignments.length === 1) {
+          solvedAssignment = validAssignments[0];
+          statements = candidateStatements.map(st => st.text);
+          break;
         }
       }
+
+      const types = solvedAssignment.map(isK => isK ? 'Knight' : 'Knave');
       const targetIdx = Math.floor(Math.random() * count);
       const correctType = types[targetIdx];
       const rawOpts = shuffleArray([
@@ -2638,7 +2697,7 @@
               { id: 'o3', text: '20', isCorrect: false },
               { id: 'o4', text: '10', isCorrect: false }
             ],
-            explanation: 'Units digits: 1, 11, 21, 31, 41, 51, 61, 71, 81, 91 = 10 ones. Tens digits: 10–19 = 10 ones. Plus 100 has no 1 in tens or units, but 1 contributes once in its units position. Total = 10 + 10 + 1 = 21.',
+            explanation: 'Units digits: 1, 11, 21, 31, 41, 51, 61, 71, 81, 91 = 10 ones. Tens digits: 10–19 = 10 ones. Plus 100 contributes one more 1 in its hundreds position. Total = 10 + 10 + 1 = 21.',
             schema: 'Digit Frequency Counting'
           },
           {
@@ -2677,7 +2736,7 @@
               { id: 'o3', text: '1/4 (25%)', isCorrect: false },
               { id: 'o4', text: '2/3 (66.7%)', isCorrect: false }
             ],
-            explanation: 'The 4 equally likely outcomes are HH, HT, TH, and TT. Knowing at least one is Heads rules out TT, leaving 3 outcomes (HH, HT, TH)u2014only 1 of which is HH, so 1/3.',
+            explanation: 'The 4 equally likely outcomes are HH, HT, TH, and TT. Knowing at least one is Heads rules out TT, leaving 3 outcomes (HH, HT, TH)—only 1 of which is HH, so 1/3.',
             schema: 'Conditional Sample Space Restriction'
           },
           {
@@ -2903,7 +2962,7 @@
             prompt: "You have already spent $1,000 on a non-refundable concert ticket. On the day of the concert, a blizzard hits and you feel sick. You should attend the concert because:",
             context: 'Only future costs and benefits are relevant to a rational decision.',
             options: [
-              { id: 'o1', text: 'None of the above; the $1,000 is a sunk cost and should be ignored', isCorrect: true },
+              { id: 'o1', text: 'None of these reasons; the $1,000 is a sunk cost and should be ignored', isCorrect: true },
               { id: 'o2', text: "You already paid for it, so you must get your money’s worth", isCorrect: false },
               { id: 'o3', text: 'Missing it would mean you wasted $1,000', isCorrect: false },
               { id: 'o4', text: 'The marginal cost of attending is now $0', isCorrect: false }
@@ -4215,7 +4274,7 @@
             domainKey: 'logic',
             domainLabel: 'Logic',
             difficultyLabel: 'Level 15',
-            prompt: 'Cheryl’s birthday is one of four dates: May 15, May 16, June 17, or June 18. Albert is told only the month, and Bernard is told only the day. Albert says: "I don’t know the birthday, and I know Bernard doesn’t know either." Which month must it be?',
+            prompt: 'Cheryl’s birthday is one of five dates: May 15, May 16, June 15, June 16, or June 18. Albert is told only the month, and Bernard is told only the day. Albert says: "I don’t know the birthday, and I know Bernard doesn’t know either." Which month must it be?',
             context: 'Look for a day number that appears only once in the entire list.',
             options: [
               { id: 'o1', text: 'May', isCorrect: true },
@@ -4263,15 +4322,15 @@
             domainKey: 'logic',
             domainLabel: 'Logic',
             difficultyLabel: 'Level 15',
-            prompt: 'Four prisoners stand in a single-file line facing forward: D sees C, B, and A; C sees B and A; B sees A; A sees nobody. They wear 2 Black and 2 White hats. D looks ahead and stays silent. Who can now deduce their own hat color with certainty?',
+            prompt: 'Four prisoners wear 2 Black and 2 White hats. Prisoner A stands behind a solid brick wall (seeing nobody and seen by nobody), while on the other side of the wall in a line facing the wall, D sees C and B, C sees B, and B sees only the wall. D stays silent. Who can now deduce their own hat color with certainty?',
             context: 'Ask why D did NOT speak immediately.',
             options: [
-              { id: 'o1', text: 'Person C (by seeing B’s hat and knowing B and A don’t match)', isCorrect: true },
+              { id: 'o1', text: 'Person C (by seeing B’s hat and knowing C and B don’t match)', isCorrect: true },
               { id: 'o2', text: 'Person A (at the front of the line)', isCorrect: false },
               { id: 'o3', text: 'Person B (by seeing A’s hat)', isCorrect: false },
               { id: 'o4', text: 'Nobody can deduce their hat', isCorrect: false }
             ],
-            explanation: 'If B and A wore matching hats, D would see both of one color and immediately know D’s hat was the opposite. D’s silence proves B and A differ—so C simply looks at B’s hat and names the opposite color.',
+            explanation: 'If C and B wore matching hats, D would see both of one color and immediately know D’s hat was the opposite. D’s silence proves C and B differ—so C simply looks at B’s hat and names the opposite color.',
             schema: 'Epistemic Line-of-Sight Deduction'
           },
           {
@@ -5032,7 +5091,7 @@
             prompt: 'In Newcomb’s Problem, an opaque Box B holds either $1,000,000 or $0, and a transparent Box A holds $1,000. A nearly infallible predictor placed $1,000,000 in Box B if they predicted you would take ONLY Box B, and $0 if they predicted you would take BOTH boxes. Why does "one-boxing" (taking only Box B) outperform "two-boxing" if the predictor is 99% accurate?',
             context: 'Compare expected payout when the predictor knows your decision rule in advance.',
             options: [
-              { id: 'o1', text: 'One-boxers average $990,000 vs $10,990 for two-boxers because the choice correlates with Box B’s contents', isCorrect: true },
+              { id: 'o1', text: 'One-boxers average $990,000 vs $11,000 for two-boxers because the choice correlates with Box B’s contents', isCorrect: true },
               { id: 'o2', text: 'Because $1,000 is worth more than $1,000,000', isCorrect: false },
               { id: 'o3', text: 'Because taking Box B changes what is already inside Box B', isCorrect: false },
               { id: 'o4', text: 'Two-boxing always earns more regardless of accuracy', isCorrect: false }
@@ -5388,6 +5447,7 @@
           btn.textContent = act.label;
           btn.className = 'btn' + (_actFilter === act.key ? ' btn-primary' : '');
           btn.style.cssText = 'padding:4px 10px;font-size:0.82rem;';
+          btn.setAttribute('aria-pressed', _actFilter === act.key ? 'true' : 'false');
           btn.onclick = () => { _actFilter = act.key; renderLevelsMenu(); };
           filterBar.appendChild(btn);
         });
@@ -5596,11 +5656,23 @@
         `;
 
         if (prob.renderType === 'stream') {
-          canvasContainer.innerHTML = `
-            <div id="memoryBox" style="display:flex; justify-content:center; align-items:center; gap:0.6rem; padding:1rem 1.5rem; background:var(--paper); border:var(--bw) solid var(--ink); border-radius:var(--radius); box-shadow:var(--shadow-sm); font-size:1.8rem; font-family:var(--mono);">
-              ${prob.streamSymbols.map((s, idx) => `<span style="padding:0.2rem 0.5rem; border:1.5px solid var(--ink); border-radius:4px; background:var(--blue-wash);"><small style="font-size:0.6rem; display:block; color:var(--muted); text-align:center;">#${idx+1}</small>${s}</span>`).join('')}
-            </div>
-          `;
+          canvasContainer.replaceChildren();
+          const memoryBox = document.createElement('div');
+          memoryBox.id = 'memoryBox';
+          memoryBox.style.cssText = 'display:flex; justify-content:center; align-items:center; gap:0.6rem; padding:1rem 1.5rem; background:var(--paper); border:var(--bw) solid var(--ink); border-radius:var(--radius); box-shadow:var(--shadow-sm); font-size:1.8rem; font-family:var(--mono);';
+          (prob.streamSymbols || []).forEach((s, idx) => {
+            const span = document.createElement('span');
+            span.style.cssText = 'padding:0.2rem 0.5rem; border:1.5px solid var(--ink); border-radius:4px; background:var(--blue-wash);';
+            const small = document.createElement('small');
+            small.style.cssText = 'font-size:0.6rem; display:block; color:var(--muted); text-align:center;';
+            small.textContent = `#${idx + 1}`;
+            const symbolSpan = document.createElement('span');
+            symbolSpan.textContent = String(s);
+            span.appendChild(small);
+            span.appendChild(symbolSpan);
+            memoryBox.appendChild(span);
+          });
+          canvasContainer.appendChild(memoryBox);
         } else {
           canvasContainer.innerHTML = `
             <div id="memoryBox">
